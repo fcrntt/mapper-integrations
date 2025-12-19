@@ -153,8 +153,11 @@ with st.sidebar:
                     if n not in st.session_state.project["endpoints"]: st.session_state.project["endpoints"][
                         n] = d; added += 1
                 if added > 0:
-                    st.success(f"Importados {added}."); st.session_state.current_endpoint_name = list(new_eps.keys())[
-                        0]; time.sleep(1); st.rerun()
+                    st.success(f"Importados {added}.");
+                    st.session_state.current_endpoint_name = list(new_eps.keys())[
+                        0];
+                    time.sleep(1);
+                    st.rerun()
                 else:
                     st.warning("Sin nuevos endpoints.")
             except Exception as e:
@@ -234,7 +237,7 @@ with tab_map:
     else:
         st.markdown(f"### ⚡ Operación: `{curr_ep}`")
 
-        # --- METADATOS EXTRA (CORREGIDO) ---
+        # --- METADATOS EXTRA ---
         with st.container(border=True):
             mc1, mc2 = st.columns([1, 3])
             with mc1:
@@ -248,34 +251,37 @@ with tab_map:
                 st.caption("🏷️ Datos Adicionales (Tracking, Operativa...)")
                 current_extras = proj["endpoints"][curr_ep].get("extra_metadata", {})
 
-                # --- FIX: INICIALIZAR SIEMPRE CON TIPOS DE CADENA PARA EVITAR BUG DE DOBLE INTRO ---
+                # Inicializar DF
                 if current_extras:
                     list_data = [{"Clave": k, "Valor": v} for k, v in current_extras.items()]
                     df_extras = pd.DataFrame(list_data, columns=["Clave", "Valor"]).astype(str)
                 else:
-                    # Crear DataFrame vacío pero con tipado estricto
                     df_extras = pd.DataFrame(columns=["Clave", "Valor"]).astype(str)
 
-                edited_extras = st.data_editor(
-                    df_extras,
-                    num_rows="dynamic",
-                    use_container_width=True,
-                    hide_index=True,
-                    height=150,
-                    key=f"meta_{curr_ep}",
-                    # Esta configuración le dice a Streamlit que siempre son campos de texto
-                    column_config={
-                        "Clave": st.column_config.TextColumn("Clave", required=True),
-                        "Valor": st.column_config.TextColumn("Valor")
-                    }
-                )
-
-                new_extras_dict = {}
-                for _, row in edited_extras.iterrows():
-                    # Validamos que Clave no sea None o vacía antes de guardar
-                    if row.get("Clave") and str(row["Clave"]).strip() and str(row["Clave"]) != "nan":
-                        new_extras_dict[row["Clave"]] = row["Valor"]
-                proj["endpoints"][curr_ep]["extra_metadata"] = new_extras_dict
+                # --- FIX: FORMULARIO PARA EVITAR RECARGA EN CADA TECLA ---
+                with st.form(key=f"form_meta_{curr_ep}"):
+                    edited_extras = st.data_editor(
+                        df_extras,
+                        num_rows="dynamic",
+                        use_container_width=True,
+                        hide_index=True,
+                        height=150,
+                        key=f"meta_{curr_ep}",
+                        column_config={
+                            "Clave": st.column_config.TextColumn("Clave", required=True),
+                            "Valor": st.column_config.TextColumn("Valor")
+                        }
+                    )
+                    # El guardado solo ocurre al apretar este botón
+                    if st.form_submit_button("💾 Guardar Datos Extra", use_container_width=True):
+                        new_extras_dict = {}
+                        for _, row in edited_extras.iterrows():
+                            if row.get("Clave") and str(row["Clave"]).strip() and str(row["Clave"]) != "nan":
+                                new_extras_dict[row["Clave"]] = row["Valor"]
+                        proj["endpoints"][curr_ep]["extra_metadata"] = new_extras_dict
+                        st.success("Guardado.")
+                        time.sleep(0.5)
+                        st.rerun()
 
         st.divider()
 
@@ -348,35 +354,50 @@ with tab_map:
             c1.metric("Progreso", f"{done}/{len(keys)}")
             c2.progress(done / len(keys) if keys else 0)
 
-            edited = st.data_editor(
-                pd.DataFrame(rows),
-                key=f"ed_{curr_ep}_{direction}",
-                column_config={
-                    "Done": st.column_config.CheckboxColumn("✅", width="small"),
-                    "Estado": st.column_config.SelectboxColumn("Estado", options=STATUS_OPTS, width="medium",
-                                                               required=True),
-                    "Campo Courier": st.column_config.TextColumn(disabled=True),
-                    "Target (DTO)": st.column_config.SelectboxColumn("Mapeo 🎯", options=u_opts, required=True,
-                                                                     width="large"),
-                    "Ejemplo": st.column_config.TextColumn(disabled=True),
-                    "Requerido": st.column_config.SelectboxColumn(options=["Sí", "No", "Cond", "?"], width="small"),
-                }, width="stretch", hide_index=True, height=600
-            )
+            # --- FIX: FORMULARIO PARA LA TABLA GRANDE ---
+            with st.form(key=f"form_map_{curr_ep}_{direction}"):
 
-            with st.expander("👁️ Ver Colores"):
-                st.dataframe(edited.style.apply(lambda r: [get_row_color(r["Estado"])] * len(r), axis=1),
+                # Mostrar los colores (Solo visualización previa)
+                # Nota: Los colores no se actualizarán al instante al cambiar el selectbox,
+                # solo al guardar, es la desventaja del formulario pero arregla el parpadeo.
+
+                edited = st.data_editor(
+                    pd.DataFrame(rows),
+                    key=f"ed_{curr_ep}_{direction}",
+                    column_config={
+                        "Done": st.column_config.CheckboxColumn("✅", width="small"),
+                        "Estado": st.column_config.SelectboxColumn("Estado", options=STATUS_OPTS, width="medium",
+                                                                   required=True),
+                        "Campo Courier": st.column_config.TextColumn(disabled=True),
+                        "Target (DTO)": st.column_config.SelectboxColumn("Mapeo 🎯", options=u_opts, required=True,
+                                                                         width="large"),
+                        "Ejemplo": st.column_config.TextColumn(disabled=True),
+                        "Requerido": st.column_config.SelectboxColumn(options=["Sí", "No", "Cond", "?"], width="small"),
+                    }, width="stretch", hide_index=True, height=600
+                )
+
+                save_map = st.form_submit_button("💾 Guardar Cambios de Mapeo", type="primary", use_container_width=True)
+
+                if save_map:
+                    nm, nmt = {}, {}
+                    for _, r in edited.iterrows():
+                        if "SELECCIONAR" not in r["Target (DTO)"] and "IGNORED" not in r["Target (DTO)"]:
+                            nm[r["Target (DTO)"].split(" | ")[0]] = r["Campo Courier"]
+                        nmt[r["Campo Courier"]] = {
+                            "required": r["Requerido"], "comment_tl": r["Nota TL"], "example_value": r["Ejemplo"],
+                            "type": r["Tipo"], "is_done": r["Done"], "status_tag": r["Estado"], "doc_desc": r["Doc"]
+                        }
+                    proj["endpoints"][curr_ep][direction]["mapping_rules"] = nm
+                    proj["endpoints"][curr_ep][direction]["field_metadata"] = nmt
+                    st.success("Mapeo guardado correctamente.")
+                    time.sleep(0.5)
+                    st.rerun()
+
+            # Visualización de colores fuera del form para referencia rápida
+            with st.expander("👁️ Ver Colores (Estado actual guardado)"):
+                st.dataframe(pd.DataFrame(rows).style.apply(lambda r: [get_row_color(r["Estado"])] * len(r), axis=1),
                              width="stretch", hide_index=True)
 
-            nm, nmt = {}, {}
-            for _, r in edited.iterrows():
-                if "SELECCIONAR" not in r["Target (DTO)"] and "IGNORED" not in r["Target (DTO)"]:
-                    nm[r["Target (DTO)"].split(" | ")[0]] = r["Campo Courier"]
-                nmt[r["Campo Courier"]] = {
-                    "required": r["Requerido"], "comment_tl": r["Nota TL"], "example_value": r["Ejemplo"],
-                    "type": r["Tipo"], "is_done": r["Done"], "status_tag": r["Estado"], "doc_desc": r["Doc"]
-                }
-            proj["endpoints"][curr_ep][direction]["mapping_rules"] = nm
-            proj["endpoints"][curr_ep][direction]["field_metadata"] = nmt
         else:
             st.info(f"Sin datos en {direction.upper()}.")
 
