@@ -6,7 +6,7 @@ import io
 import xlsxwriter
 
 # --- CONFIGURACIÓN ---
-st.set_page_config(page_title="Mapper Pro v35", layout="wide", page_icon="🏷️")
+st.set_page_config(page_title="Mapper Pro v36", layout="wide", page_icon="🏷️")
 
 # --- COLORES Y ESTADOS (GLOBAL) ---
 STATUS_OPTS = [
@@ -23,7 +23,6 @@ STATUS_OPTS = [
 
 
 def get_row_color(s):
-    # Diccionario para pintar en la web (Streamlit)
     c = {
         "Analista": '#e3f2fd', "Courier": '#fff9c4', "Confirmado": '#dcedc8',
         "Omitido": '#f5f5f5', "ITX": '#ffe0b2', "Frontal": '#e1bee7',
@@ -67,15 +66,12 @@ def infer_smart_type(key, value):
     return 'String? (null)'
 
 
-# --- GENERADOR DE EXCEL PRO (CORREGIDO) ---
-def generate_excel_pro(df, dropdown_target_options):
+# --- GENERADOR DE EXCEL PRO (CON MINI TABLA ARRIBA) ---
+def generate_excel_pro(df_main, df_extras_dict, dropdown_target_options):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         sheet_name = 'Mapeo'
-        # Escribimos datos desde la fila 1
-        df.to_excel(writer, sheet_name=sheet_name, index=False, startrow=1, header=False)
         workbook = writer.book
-        worksheet = writer.sheets[sheet_name]
 
         # --- 1. ESTILOS ---
         base_fmt = workbook.add_format(
@@ -85,86 +81,124 @@ def generate_excel_pro(df, dropdown_target_options):
             'font_color': 'white', 'bg_color': '#2C3E50',
             'valign': 'vcenter', 'align': 'center', 'border': 1
         })
+        section_title_fmt = workbook.add_format({
+            'font_name': 'Calibri', 'font_size': 14, 'bold': True, 'font_color': '#2C3E50', 'underline': True
+        })
 
-        # Mapeo EXACTO de opciones del desplegable a Colores HEX
-        # Esto asegura que el formato condicional funcione perfecto
         color_map = {
-            "🔵 Revisar con Analista": '#E3F2FD',
-            "🟡 Revisar con Courier": '#FFF9C4',
-            "✅ Valor Confirmado": '#DCEDC8',
-            "🌫️ Valor Omitido": '#F5F5F5',  # Gris claro
-            "🟠 Revisar con ITX": '#FFE0B2',
-            "🟣 Validar Frontal": '#E1BEE7',
-            "🧪 Postman": '#FFFFE0',
-            "🟢 Pendiente de verificar TL": '#A5D6A7',
-            "⚪ Sin Estado": '#FFFFFF'
+            "🔵 Revisar con Analista": '#E3F2FD', "🟡 Revisar con Courier": '#FFF9C4',
+            "✅ Valor Confirmado": '#DCEDC8', "🌫️ Valor Omitido": '#F5F5F5',
+            "🟠 Revisar con ITX": '#FFE0B2', "🟣 Validar Frontal": '#E1BEE7',
+            "🧪 Postman": '#FFFFE0', "🟢 Pendiente de verificar TL": '#A5D6A7', "⚪ Sin Estado": '#FFFFFF'
         }
 
-        # --- 2. ESTRUCTURA ---
-        # Headers
-        for col_num, value in enumerate(df.columns.values):
-            worksheet.write(0, col_num, value, header_fmt)
+        # --- 2. PREPARACIÓN DE DATOS EXTRA ---
+        # Convertimos el dict de extras a DataFrame para escribirlo fácil
+        if df_extras_dict:
+            list_data = [{"Clave": k, "Valor": v} for k, v in df_extras_dict.items()]
+            df_extras = pd.DataFrame(list_data, columns=["Clave", "Valor"])
+        else:
+            df_extras = pd.DataFrame(columns=["Clave", "Valor"])
 
-        # Ajuste Filas
-        worksheet.set_row(0, 25)
-        for i in range(len(df)): worksheet.set_row(i + 1, 20)
+        # --- 3. ESCRITURA ---
 
-        # Borde General
-        worksheet.set_column(0, len(df.columns) - 1, 20, base_fmt)
+        # Escribimos un DF temporal vacío solo para iniciar la hoja
+        pd.DataFrame().to_excel(writer, sheet_name=sheet_name)
+        worksheet = writer.sheets[sheet_name]
 
-        # --- 3. FORMATO CONDICIONAL (VIVO) ---
-        last_row = len(df) + 1
-        last_col_char = chr(65 + len(df.columns) - 1)  # Letra de la última columna
-        range_full = f"A2:{last_col_char}{last_row}"
+        current_row = 0
+
+        # --- A) TABLA DATOS ADICIONALES (MINI TABLA) ---
+        if not df_extras.empty:
+            worksheet.write(current_row, 0, "DATOS ADICIONALES", section_title_fmt)
+            current_row += 1
+
+            # Headers Extras
+            worksheet.write(current_row, 0, "Clave", header_fmt)
+            worksheet.write(current_row, 1, "Valor", header_fmt)
+            current_row += 1
+
+            # Data Extras
+            for _, row in df_extras.iterrows():
+                worksheet.write(current_row, 0, row['Clave'], base_fmt)
+                worksheet.write(current_row, 1, row['Valor'], base_fmt)
+                current_row += 1
+
+            # Espacio separador
+            current_row += 2
+
+        # --- B) TABLA PRINCIPAL (MAPEO) ---
+        worksheet.write(current_row, 0, "MAPEO DE CAMPOS", section_title_fmt)
+        current_row += 1
+
+        # Guardamos donde empieza el header de la tabla principal
+        main_header_row = current_row
+
+        # Escribimos los datos de la tabla principal
+        # startrow = main_header_row + 1 (porque to_excel escribiría header, pero lo haremos manual para estilo)
+        df_main.to_excel(writer, sheet_name=sheet_name, index=False, startrow=main_header_row + 1, header=False)
+
+        # Escribir Headers Manualmente con Estilo
+        for col_num, value in enumerate(df_main.columns.values):
+            worksheet.write(main_header_row, col_num, value, header_fmt)
+
+        # Altura filas tabla principal
+        for i in range(len(df_main)):
+            worksheet.set_row(main_header_row + 1 + i, 20)
+
+        # --- 4. FORMATO CONDICIONAL (VIVO) ---
+        # Calculamos el rango basado en la posición variable
+        first_data_row = main_header_row + 2  # Excel row index (1-based)
+        last_data_row = first_data_row + len(df_main) - 1
+        last_col_char = chr(65 + len(df_main.columns) - 1)
+
+        # Rango ej: A15:E50
+        range_full = f"A{first_data_row}:{last_col_char}{last_data_row}"
 
         for status_text, bg_color in color_map.items():
-            # Creamos el formato
             f = workbook.add_format({'bg_color': bg_color, 'border': 1, 'border_color': '#D9D9D9', 'valign': 'vcenter'})
-            if "Omitido" in status_text: f.set_font_color('#9E9E9E')  # Texto gris para omitidos
+            if "Omitido" in status_text: f.set_font_color('#9E9E9E')
 
-            # Aplicamos la regla: Si la columna A ($A2) es igual al texto del estado
+            # La fórmula debe apuntar a la columna A de la fila de inicio
+            # IMPORTANTE: $A{first_data_row} fija la columna A pero deja la fila relativa
             worksheet.conditional_format(range_full, {
                 'type': 'formula',
-                'criteria': f'=$A2="{status_text}"',
+                'criteria': f'=$A{first_data_row}="{status_text}"',
                 'format': f
             })
 
-        # --- 4. DATA VALIDATION (DESPLEGABLES) ---
-        # Hoja oculta para listas
+        # --- 5. VALIDACIÓN DE DATOS (DROPDOWNS) ---
         ws_data = workbook.add_worksheet('Data_Validation')
         ws_data.hide()
 
-        # Lista 1: ESTADOS (Columna A de la hoja oculta)
-        for i, opt in enumerate(STATUS_OPTS):
-            ws_data.write(i, 0, opt)
+        # Lista Estados
+        for i, opt in enumerate(STATUS_OPTS): ws_data.write(i, 0, opt)
         range_status = f'=Data_Validation!$A$1:$A${len(STATUS_OPTS)}'
 
-        # Aplicar validación a Columna A (Estado) en hoja principal
-        worksheet.data_validation(1, 0, len(df), 0, {
-            'validate': 'list', 'source': range_status,
-            'input_title': 'Estado', 'input_message': 'Selecciona estado'
+        # Aplicar Dropdown Estado (Columna A)
+        worksheet.data_validation(main_header_row + 1, 0, main_header_row + len(df_main), 0, {
+            'validate': 'list', 'source': range_status, 'input_title': 'Estado'
         })
 
-        # Lista 2: TARGETS (Columna B de la hoja oculta)
+        # Lista Targets
         if dropdown_target_options:
-            for i, opt in enumerate(dropdown_target_options):
-                ws_data.write(i, 1, opt)
+            for i, opt in enumerate(dropdown_target_options): ws_data.write(i, 1, opt)
             range_target = f'=Data_Validation!$B$1:$B${len(dropdown_target_options)}'
 
-            # Aplicar validación a Columna Target (Buscamos el índice)
-            idx_target = df.columns.get_loc("Target (DTO)") if "Target (DTO)" in df.columns else 2
-            worksheet.data_validation(1, idx_target, len(df), idx_target, {
-                'validate': 'list', 'source': range_target,
-                'input_title': 'Target', 'input_message': 'Selecciona campo DTO'
+            idx_target = df_main.columns.get_loc("Target (DTO)") if "Target (DTO)" in df_main.columns else 2
+            worksheet.data_validation(main_header_row + 1, idx_target, main_header_row + len(df_main), idx_target, {
+                'validate': 'list', 'source': range_target, 'input_title': 'Target'
             })
 
-        # --- 5. EXTRAS ---
-        worksheet.autofilter(0, 0, len(df), len(df.columns) - 1)
-        worksheet.freeze_panes(1, 0)
+        # --- 6. DETALLES FINALES ---
+        worksheet.autofilter(main_header_row, 0, main_header_row + len(df_main), len(df_main.columns) - 1)
+
+        # Congelar paneles justo debajo del header principal
+        worksheet.freeze_panes(main_header_row + 1, 0)
 
         # Anchos
-        worksheet.set_column(0, 0, 30)  # Estado
-        worksheet.set_column(1, 1, 35)  # Courier
+        worksheet.set_column(0, 0, 30)  # Estado / Clave
+        worksheet.set_column(1, 1, 35)  # Courier / Valor
         worksheet.set_column(2, 2, 55)  # Target
         worksheet.set_column(3, 3, 30)  # Ejemplo
 
@@ -215,11 +249,9 @@ def parse_postman_collection(data):
                                                                              "doc_desc": ""}
                 except:
                     pass
-                found_endpoints[name] = {
-                    "method": method, "extra_metadata": {},
-                    "request": {"mapping_rules": {}, "field_metadata": req_meta},
-                    "response": {"mapping_rules": {}, "field_metadata": res_meta}
-                }
+                found_endpoints[name] = {"method": method, "extra_metadata": {},
+                                         "request": {"mapping_rules": {}, "field_metadata": req_meta},
+                                         "response": {"mapping_rules": {}, "field_metadata": res_meta}}
 
     if 'item' in data: recursive_search(data['item'])
     return found_endpoints
@@ -495,7 +527,10 @@ with tab_map:
             with c_exp1:
                 st.info("💡 Si has hecho cambios, asegúrate de **Guardar** antes de descargar.")
             with c_exp2:
-                excel_bytes = generate_excel_pro(df_table, u_opts)
+                # Obtenemos los extras actuales del estado
+                extras_to_export = proj["endpoints"][curr_ep].get("extra_metadata", {})
+
+                excel_bytes = generate_excel_pro(df_table, extras_to_export, u_opts)
                 file_n = f"Map_{curr_ep}_{direction}.xlsx"
                 st.download_button(
                     label="📥 Descargar Excel",
