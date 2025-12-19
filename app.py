@@ -6,7 +6,7 @@ import io
 import xlsxwriter
 
 # --- CONFIGURACIÓN ---
-st.set_page_config(page_title="Mapper Pro v36", layout="wide", page_icon="🏷️")
+st.set_page_config(page_title="Mapper Pro v37", layout="wide", page_icon="🏷️")
 
 # --- COLORES Y ESTADOS (GLOBAL) ---
 STATUS_OPTS = [
@@ -93,7 +93,6 @@ def generate_excel_pro(df_main, df_extras_dict, dropdown_target_options):
         }
 
         # --- 2. PREPARACIÓN DE DATOS EXTRA ---
-        # Convertimos el dict de extras a DataFrame para escribirlo fácil
         if df_extras_dict:
             list_data = [{"Clave": k, "Valor": v} for k, v in df_extras_dict.items()]
             df_extras = pd.DataFrame(list_data, columns=["Clave", "Valor"])
@@ -101,90 +100,65 @@ def generate_excel_pro(df_main, df_extras_dict, dropdown_target_options):
             df_extras = pd.DataFrame(columns=["Clave", "Valor"])
 
         # --- 3. ESCRITURA ---
-
-        # Escribimos un DF temporal vacío solo para iniciar la hoja
         pd.DataFrame().to_excel(writer, sheet_name=sheet_name)
         worksheet = writer.sheets[sheet_name]
 
         current_row = 0
 
-        # --- A) TABLA DATOS ADICIONALES (MINI TABLA) ---
+        # --- A) TABLA DATOS ADICIONALES ---
         if not df_extras.empty:
             worksheet.write(current_row, 0, "DATOS ADICIONALES", section_title_fmt)
             current_row += 1
-
-            # Headers Extras
             worksheet.write(current_row, 0, "Clave", header_fmt)
             worksheet.write(current_row, 1, "Valor", header_fmt)
             current_row += 1
-
-            # Data Extras
             for _, row in df_extras.iterrows():
                 worksheet.write(current_row, 0, row['Clave'], base_fmt)
                 worksheet.write(current_row, 1, row['Valor'], base_fmt)
                 current_row += 1
-
-            # Espacio separador
             current_row += 2
 
-        # --- B) TABLA PRINCIPAL (MAPEO) ---
+        # --- B) TABLA PRINCIPAL ---
         worksheet.write(current_row, 0, "MAPEO DE CAMPOS", section_title_fmt)
         current_row += 1
-
-        # Guardamos donde empieza el header de la tabla principal
         main_header_row = current_row
 
-        # Escribimos los datos de la tabla principal
-        # startrow = main_header_row + 1 (porque to_excel escribiría header, pero lo haremos manual para estilo)
         df_main.to_excel(writer, sheet_name=sheet_name, index=False, startrow=main_header_row + 1, header=False)
-
-        # Escribir Headers Manualmente con Estilo
         for col_num, value in enumerate(df_main.columns.values):
             worksheet.write(main_header_row, col_num, value, header_fmt)
 
-        # Altura filas tabla principal
         for i in range(len(df_main)):
             worksheet.set_row(main_header_row + 1 + i, 20)
 
-        # --- 4. FORMATO CONDICIONAL (VIVO) ---
-        # Calculamos el rango basado en la posición variable
-        first_data_row = main_header_row + 2  # Excel row index (1-based)
+        # --- 4. FORMATO CONDICIONAL ---
+        first_data_row = main_header_row + 2
         last_data_row = first_data_row + len(df_main) - 1
         last_col_char = chr(65 + len(df_main.columns) - 1)
-
-        # Rango ej: A15:E50
         range_full = f"A{first_data_row}:{last_col_char}{last_data_row}"
 
         for status_text, bg_color in color_map.items():
             f = workbook.add_format({'bg_color': bg_color, 'border': 1, 'border_color': '#D9D9D9', 'valign': 'vcenter'})
             if "Omitido" in status_text: f.set_font_color('#9E9E9E')
-
-            # La fórmula debe apuntar a la columna A de la fila de inicio
-            # IMPORTANTE: $A{first_data_row} fija la columna A pero deja la fila relativa
             worksheet.conditional_format(range_full, {
                 'type': 'formula',
                 'criteria': f'=$A{first_data_row}="{status_text}"',
                 'format': f
             })
 
-        # --- 5. VALIDACIÓN DE DATOS (DROPDOWNS) ---
+        # --- 5. VALIDACIÓN DE DATOS ---
         ws_data = workbook.add_worksheet('Data_Validation')
         ws_data.hide()
 
-        # Lista Estados
         for i, opt in enumerate(STATUS_OPTS): ws_data.write(i, 0, opt)
         range_status = f'=Data_Validation!$A$1:$A${len(STATUS_OPTS)}'
 
-        # Aplicar Dropdown Estado (Columna A)
         worksheet.data_validation(main_header_row + 1, 0, main_header_row + len(df_main), 0, {
             'validate': 'list', 'source': range_status, 'input_title': 'Estado'
         })
 
-        # Lista Targets
         if dropdown_target_options:
             for i, opt in enumerate(dropdown_target_options): ws_data.write(i, 1, opt)
             range_target = f'=Data_Validation!$B$1:$B${len(dropdown_target_options)}'
-
             idx_target = df_main.columns.get_loc("Target (DTO)") if "Target (DTO)" in df_main.columns else 2
             worksheet.data_validation(main_header_row + 1, idx_target, main_header_row + len(df_main), idx_target, {
                 'validate': 'list', 'source': range_target, 'input_title': 'Target'
@@ -192,15 +166,11 @@ def generate_excel_pro(df_main, df_extras_dict, dropdown_target_options):
 
         # --- 6. DETALLES FINALES ---
         worksheet.autofilter(main_header_row, 0, main_header_row + len(df_main), len(df_main.columns) - 1)
-
-        # Congelar paneles justo debajo del header principal
         worksheet.freeze_panes(main_header_row + 1, 0)
-
-        # Anchos
-        worksheet.set_column(0, 0, 30)  # Estado / Clave
-        worksheet.set_column(1, 1, 35)  # Courier / Valor
-        worksheet.set_column(2, 2, 55)  # Target
-        worksheet.set_column(3, 3, 30)  # Ejemplo
+        worksheet.set_column(0, 0, 30)
+        worksheet.set_column(1, 1, 35)
+        worksheet.set_column(2, 2, 55)
+        worksheet.set_column(3, 3, 30)
 
     return output.getvalue()
 
@@ -289,7 +259,7 @@ with st.sidebar:
                 time.sleep(0.5);
                 st.rerun()
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.error(f"Error al cargar proyecto: {e}")
 
     with st.expander("🟠 Importar Postman"):
         pm_file = st.file_uploader("Colección v2.1", type=["json"], key="pm_up")
@@ -308,7 +278,7 @@ with st.sidebar:
                 else:
                     st.warning("Sin nuevos endpoints.")
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.error(f"Error en Postman: {e}")
 
     st.markdown("---")
     new_ep = st.text_input("Nuevo Endpoint:", placeholder="Ej: CreateOrder")
@@ -362,10 +332,18 @@ with tab_dtos:
             cont = None
             with st1:
                 f = st.file_uploader("JSON", type=["json"], key="nf")
-                if f: cont = json.load(f)
+                if f:
+                    try:
+                        cont = json.load(f)
+                    except Exception as e:
+                        st.error(f"Error JSON: {e}")
             with st2:
                 txt = st.text_area("JSON Text", height=150)
-                if txt: cont = json.loads(txt)
+                if txt:
+                    try:
+                        cont = json.loads(txt)
+                    except Exception as e:
+                        st.error(f"Error JSON: {e}")
             if st.button("Añadir", use_container_width=True):
                 if nom and cont: proj["dto_library"][nom] = cont; st.success("OK"); time.sleep(0.5); st.rerun()
         with ted:
@@ -373,8 +351,12 @@ with tab_dtos:
             if opts:
                 eds = st.selectbox("Editar:", opts)
                 val = st.text_area("JSON", value=json.dumps(proj["dto_library"][eds], indent=4), height=300)
-                if st.button("Guardar", use_container_width=True): proj["dto_library"][eds] = json.loads(
-                    val); st.success("Guardado")
+                if st.button("Guardar", use_container_width=True):
+                    try:
+                        proj["dto_library"][eds] = json.loads(val);
+                        st.success("Guardado")
+                    except Exception as e:
+                        st.error(f"Error JSON: {e}")
 
 # --- TAB MAPEO ---
 with tab_map:
@@ -443,15 +425,24 @@ with tab_map:
                 for k, v in flatten_payload(dc).items(): u_opts.append(f"[{dn}] {k} | {v}")
             u_opts.sort()
 
-        # --- CARGA DE JSON ---
+        # --- CARGA DE JSON (PROTEGIDO) ---
         t1, t2 = st.tabs(["Pegar", "Subir"])
         raw = None
         with t1:
             tx = st.text_area(f"JSON {direction.title()}", height=100, key=f"tx_{curr_ep}_{direction}")
-            if tx and tx.strip().startswith(("{", "[")): raw = json.loads(tx)
+            if tx and tx.strip().startswith(("{", "[")):
+                try:
+                    raw = json.loads(tx)
+                except json.JSONDecodeError as e:
+                    st.error(
+                        f"⚠️ **Error en el JSON**: El formato no es válido. Revisa comillas dobles sin cerrar o comas extra.\n\nDetalle: {e}")
         with t2:
             fl = st.file_uploader("Archivo", type=['json'], key=f"fl_{curr_ep}_{direction}")
-            if fl: raw = json.load(fl)
+            if fl:
+                try:
+                    raw = json.load(fl)
+                except json.JSONDecodeError as e:
+                    st.error(f"⚠️ **Error en el Archivo**: El JSON no es válido.\n\nDetalle: {e}")
 
         keys, exs, typs = [], [], []
         if raw:
