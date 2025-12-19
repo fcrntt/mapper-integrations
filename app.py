@@ -2,9 +2,11 @@ import streamlit as st
 import pandas as pd
 import json
 import time
+import io
+import xlsxwriter
 
 # --- CONFIGURACIÓN ---
-st.set_page_config(page_title="Mapper Pro v30", layout="wide", page_icon="🏷️")
+st.set_page_config(page_title="Mapper Pro v33", layout="wide", page_icon="🏷️")
 
 
 # --- FUNCIONES CORE ---
@@ -40,6 +42,116 @@ def infer_smart_type(key, value):
     return 'String? (null)'
 
 
+# --- GENERADOR DE EXCEL PRO (ESTILO MEJORADO) ---
+def generate_excel_pretty(df, dropdown_options):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        sheet_name = 'Mapeo'
+        df.to_excel(writer, sheet_name=sheet_name, index=False, startrow=1, header=False)
+        workbook = writer.book
+        worksheet = writer.sheets[sheet_name]
+
+        # --- DEFINICIÓN DE FORMATOS ---
+        base_font = 'Calibri'
+        base_size = 11
+
+        # Formato base para celdas (centrado vertical, borde suave)
+        fmt_base = workbook.add_format({
+            'font_name': base_font, 'font_size': base_size,
+            'valign': 'vcenter', 'border': 1, 'border_color': '#D9D9D9'
+        })
+
+        # Formato de Encabezado (Oscuro, Texto Blanco)
+        fmt_header = workbook.add_format({
+            'font_name': base_font, 'font_size': 12, 'bold': True,
+            'font_color': 'white', 'bg_color': '#2C3E50',
+            'valign': 'vcenter', 'align': 'center', 'border': 1
+        })
+
+        # Colores de Estado (Pastel pero profesionales)
+        colors = {
+            "Analista": '#E3F2FD', "Courier": '#FFF9C4', "Confirmado": '#DCEDC8',
+            "Omitido": '#F5F5F5', "ITX": '#FFE0B2', "Frontal": '#E1BEE7',
+            "Postman": '#FFFFE0', "TL": '#A5D6A7'
+        }
+
+        # Crear objetos de formato para cada color
+        fmt_colors = {}
+        for k, v in colors.items():
+            fmt_colors[k] = workbook.add_format({
+                'font_name': base_font, 'font_size': base_size,
+                'valign': 'vcenter', 'border': 1, 'border_color': '#D9D9D9',
+                'bg_color': v
+            })
+            # Excepción para Omitido (texto gris)
+            if k == "Omitido": fmt_colors[k].set_font_color('#9E9E9E')
+
+        # --- ESTRUCTURA DE LA HOJA ---
+
+        # 1. Escribir Encabezados manualmente con estilo
+        headers = df.columns.values
+        for col_num, value in enumerate(headers):
+            worksheet.write(0, col_num, value, fmt_header)
+
+        # 2. Configurar altura de filas
+        worksheet.set_row(0, 25)  # Header más alto
+
+        # 3. Datos y Colores
+        status_col_idx = df.columns.get_loc("Estado") if "Estado" in df.columns else 0
+
+        for row_num, row_data in df.iterrows():
+            excel_row = row_num + 1
+            status_val = str(row_data["Estado"])
+
+            # Elegir formato
+            current_fmt = fmt_base
+            for key, fmt in fmt_colors.items():
+                if key in status_val:
+                    current_fmt = fmt
+                    break
+
+            worksheet.set_row(excel_row, 20)  # Altura cómoda para filas de datos
+
+            for col_num, cell_value in enumerate(row_data):
+                val = cell_value if pd.notna(cell_value) else ""
+                worksheet.write(excel_row, col_num, val, current_fmt)
+
+        # 4. Crear Tabla de Excel (Añade Filtros automáticamente)
+        # Usamos estilo 'None' para que prevalezcan nuestros colores de fila, pero mantenemos los filtros
+        worksheet.add_table(0, 0, len(df), len(df.columns) - 1, {
+            'columns': [{'header': c} for c in headers],
+            'style': 'TableStyleLight1',  # Un estilo ligero que no pelea con los colores
+            'name': 'TablaMapeo'
+        })
+
+        # 5. Inmovilizar Paneles (Freeze Panes) para que el header baje al hacer scroll
+        worksheet.freeze_panes(1, 0)
+
+        # 6. Dropdowns (Validación)
+        if dropdown_options:
+            worksheet_data = workbook.add_worksheet('Data_Validation')
+            worksheet_data.hide()
+            for i, opt in enumerate(dropdown_options):
+                worksheet_data.write(i, 0, opt)
+
+            data_range = f'=Data_Validation!$A$1:$A${len(dropdown_options)}'
+            target_col_idx = df.columns.get_loc("Target (DTO)") if "Target (DTO)" in df.columns else 2
+
+            worksheet.data_validation(1, target_col_idx, len(df), target_col_idx, {
+                'validate': 'list', 'source': data_range,
+                'input_title': 'Selecciona Campo', 'input_message': 'Elige del DTO'
+            })
+
+        # 7. Ajustar Anchos de Columna
+        worksheet.set_column(0, 0, 22)  # Estado
+        worksheet.set_column(1, 1, 35)  # Campo Courier (Más ancho)
+        worksheet.set_column(2, 2, 50)  # Target (Muy ancho)
+        worksheet.set_column(3, 3, 30)  # Ejemplo
+        worksheet.set_column(4, 7, 15)  # Resto
+
+    return output.getvalue()
+
+
 # --- IMPORTADOR POSTMAN ---
 def parse_postman_collection(data):
     found_endpoints = {}
@@ -66,7 +178,6 @@ def parse_postman_collection(data):
                                                                      "status_tag": "⚪ Sin Estado", "doc_desc": ""}
                 except:
                     pass
-
                 res_meta = {}
                 try:
                     if 'response' in item and item['response']:
@@ -85,7 +196,6 @@ def parse_postman_collection(data):
                                                                              "doc_desc": ""}
                 except:
                     pass
-
                 found_endpoints[name] = {
                     "method": method, "extra_metadata": {},
                     "request": {"mapping_rules": {}, "field_metadata": req_meta},
@@ -96,7 +206,7 @@ def parse_postman_collection(data):
     return found_endpoints
 
 
-# --- COLORES ---
+# --- COLORES UI ---
 STATUS_OPTS = ["⚪ Sin Estado", "🔵 Revisar con Analista", "🟡 Revisar con Courier", "✅ Valor Confirmado",
                "🌫️ Valor Omitido", "🟠 Revisar con ITX", "🟣 Validar Frontal", "🧪 Postman", "🟢 Pendiente de verificar TL"]
 
@@ -123,16 +233,16 @@ with st.sidebar:
         if uploaded_file and st.button("Restaurar", use_container_width=True):
             try:
                 data = json.load(uploaded_file)
-                if "dto_library" not in data:  # V24 compat
+                if "dto_library" not in data:
                     old_std = data.get("internal_standard_snapshot", {})
                     data["dto_library"] = {"MainDTO": old_std} if old_std else {}
                 for ep_name, ep_data in data.get("endpoints", {}).items():
-                    if "request" not in ep_data:  # V28 compat
+                    if "request" not in ep_data:
                         data["endpoints"][ep_name] = {"method": "GET", "extra_metadata": {},
                                                       "request": {"mapping_rules": ep_data.get("mapping_rules", {}),
                                                                   "field_metadata": ep_data.get("field_metadata", {})},
                                                       "response": {"mapping_rules": {}, "field_metadata": {}}}
-                    elif "method" not in ep_data:  # V29 compat
+                    elif "method" not in ep_data:
                         ep_data["method"] = "GET";
                         ep_data["extra_metadata"] = {}
                 st.session_state.project = data
@@ -154,8 +264,7 @@ with st.sidebar:
                         n] = d; added += 1
                 if added > 0:
                     st.success(f"Importados {added}.");
-                    st.session_state.current_endpoint_name = list(new_eps.keys())[
-                        0];
+                    st.session_state.current_endpoint_name = list(new_eps.keys())[0];
                     time.sleep(1);
                     st.rerun()
                 else:
@@ -248,31 +357,21 @@ with tab_map:
                 proj["endpoints"][curr_ep]["method"] = new_meth
 
             with mc2:
-                st.caption("🏷️ Datos Adicionales (Tracking, Operativa...)")
+                st.caption("🏷️ Datos Adicionales")
                 current_extras = proj["endpoints"][curr_ep].get("extra_metadata", {})
-
-                # Inicializar DF
                 if current_extras:
                     list_data = [{"Clave": k, "Valor": v} for k, v in current_extras.items()]
                     df_extras = pd.DataFrame(list_data, columns=["Clave", "Valor"]).astype(str)
                 else:
                     df_extras = pd.DataFrame(columns=["Clave", "Valor"]).astype(str)
 
-                # --- FIX: FORMULARIO PARA EVITAR RECARGA EN CADA TECLA ---
                 with st.form(key=f"form_meta_{curr_ep}"):
                     edited_extras = st.data_editor(
-                        df_extras,
-                        num_rows="dynamic",
-                        use_container_width=True,
-                        hide_index=True,
-                        height=150,
+                        df_extras, num_rows="dynamic", use_container_width=True, hide_index=True, height=150,
                         key=f"meta_{curr_ep}",
-                        column_config={
-                            "Clave": st.column_config.TextColumn("Clave", required=True),
-                            "Valor": st.column_config.TextColumn("Valor")
-                        }
+                        column_config={"Clave": st.column_config.TextColumn("Clave", required=True),
+                                       "Valor": st.column_config.TextColumn("Valor")}
                     )
-                    # El guardado solo ocurre al apretar este botón
                     if st.form_submit_button("💾 Guardar Datos Extra", use_container_width=True):
                         new_extras_dict = {}
                         for _, row in edited_extras.iterrows():
@@ -327,7 +426,7 @@ with tab_map:
             for k in keys: exs.append(prev_meta[k].get("example_value", "")); typs.append(prev_meta[k].get("type", ""))
 
         if keys:
-            rows, done = [], 0
+            rows = []
             for i, k in enumerate(keys):
                 tgt = "SELECCIONAR_CAMPO"
                 for t, s in prev_map.items():
@@ -336,9 +435,7 @@ with tab_map:
                             if t == o.split(" | ")[0]: tgt = o; break
                         break
                 meta = prev_meta.get(k, {})
-                if meta.get("is_done"): done += 1
                 rows.append({
-                    "Done": meta.get("is_done", False),
                     "Estado": meta.get("status_tag", "⚪ Sin Estado"),
                     "Campo Courier": k,
                     "Target (DTO)": tgt,
@@ -350,22 +447,28 @@ with tab_map:
                 })
 
             st.write("---")
-            c1, c2 = st.columns([1, 4])
-            c1.metric("Progreso", f"{done}/{len(keys)}")
-            c2.progress(done / len(keys) if keys else 0)
 
-            # --- FIX: FORMULARIO PARA LA TABLA GRANDE ---
+            # --- SECCIÓN BOTÓN EXCEL (SIN PROGRESO) ---
+            df_export = pd.DataFrame(rows)
+
+            # Usamos columnas para alinear el botón a la derecha o dejarlo limpio
+            exc_col1, exc_col2 = st.columns([4, 1])
+            with exc_col2:
+                excel_bytes = generate_excel_pretty(df_export, u_opts)
+                file_n = f"Map_{curr_ep}_{direction}.xlsx"
+                st.download_button(
+                    label="📥 Exportar Excel",
+                    data=excel_bytes,
+                    file_name=file_n,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+
             with st.form(key=f"form_map_{curr_ep}_{direction}"):
-
-                # Mostrar los colores (Solo visualización previa)
-                # Nota: Los colores no se actualizarán al instante al cambiar el selectbox,
-                # solo al guardar, es la desventaja del formulario pero arregla el parpadeo.
-
                 edited = st.data_editor(
-                    pd.DataFrame(rows),
+                    df_export,
                     key=f"ed_{curr_ep}_{direction}",
                     column_config={
-                        "Done": st.column_config.CheckboxColumn("✅", width="small"),
                         "Estado": st.column_config.SelectboxColumn("Estado", options=STATUS_OPTS, width="medium",
                                                                    required=True),
                         "Campo Courier": st.column_config.TextColumn(disabled=True),
@@ -376,16 +479,17 @@ with tab_map:
                     }, width="stretch", hide_index=True, height=600
                 )
 
-                save_map = st.form_submit_button("💾 Guardar Cambios de Mapeo", type="primary", use_container_width=True)
-
-                if save_map:
+                if st.form_submit_button("💾 Guardar Cambios de Mapeo", type="primary", use_container_width=True):
                     nm, nmt = {}, {}
                     for _, r in edited.iterrows():
                         if "SELECCIONAR" not in r["Target (DTO)"] and "IGNORED" not in r["Target (DTO)"]:
                             nm[r["Target (DTO)"].split(" | ")[0]] = r["Campo Courier"]
+
+                        is_mapped = "SELECCIONAR" not in r["Target (DTO)"]
+
                         nmt[r["Campo Courier"]] = {
                             "required": r["Requerido"], "comment_tl": r["Nota TL"], "example_value": r["Ejemplo"],
-                            "type": r["Tipo"], "is_done": r["Done"], "status_tag": r["Estado"], "doc_desc": r["Doc"]
+                            "type": r["Tipo"], "is_done": is_mapped, "status_tag": r["Estado"], "doc_desc": r["Doc"]
                         }
                     proj["endpoints"][curr_ep][direction]["mapping_rules"] = nm
                     proj["endpoints"][curr_ep][direction]["field_metadata"] = nmt
@@ -393,11 +497,9 @@ with tab_map:
                     time.sleep(0.5)
                     st.rerun()
 
-            # Visualización de colores fuera del form para referencia rápida
             with st.expander("👁️ Ver Colores (Estado actual guardado)"):
-                st.dataframe(pd.DataFrame(rows).style.apply(lambda r: [get_row_color(r["Estado"])] * len(r), axis=1),
+                st.dataframe(df_export.style.apply(lambda r: [get_row_color(r["Estado"])] * len(r), axis=1),
                              width="stretch", hide_index=True)
-
         else:
             st.info(f"Sin datos en {direction.upper()}.")
 
