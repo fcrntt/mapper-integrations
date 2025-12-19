@@ -1,0 +1,38 @@
+{
+  "order": {
+    "internal_id": "String (UUID)",
+    "external_ref": "String",
+    "status": "Enum",
+    "dates": {
+      "created_at": "DateTime",
+      "estimated_delivery": "Date"
+    },
+    "customer": {
+      "name": "String",
+      "tax_id": "String",
+      "contact": {
+        "email": "String",
+        "phone": "String"
+      }
+    },
+    "shipping": {
+      "address": {
+        "street": "String",
+        "number": "String",
+        "zip_code": "String",
+        "city": "String",
+        "country": "String (ISO)"
+      },
+      "service_level": "String"
+    },
+    "financial": {
+      "invoice_number": "String",
+      "invoice_key": "String",
+      "total_value": "Decimal"
+    }
+  },
+  "metadata": {
+    "source_system": "String",
+    "retry_count": "Integer"
+  }
+}
