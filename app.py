@@ -1,12 +1,10 @@
 import streamlit as st
 import pandas as pd
 import json
-import xmltodict
 import time
-import os
 
 # --- CONFIGURACIÓN ---
-st.set_page_config(page_title="Mapper Pro v28 (Req/Res)", layout="wide", page_icon="⇄")
+st.set_page_config(page_title="Mapper Pro v30", layout="wide", page_icon="🏷️")
 
 
 # --- FUNCIONES CORE ---
@@ -42,54 +40,54 @@ def infer_smart_type(key, value):
     return 'String? (null)'
 
 
-# --- IMPORTADOR POSTMAN (REQ + RES) ---
+# --- IMPORTADOR POSTMAN ---
 def parse_postman_collection(data):
     found_endpoints = {}
 
     def recursive_search(items):
         for item in items:
-            if 'item' in item:  # Carpeta
+            if 'item' in item:
                 recursive_search(item['item'])
-            elif 'request' in item:  # Endpoint
+            elif 'request' in item:
                 name = item['name']
-
-                # 1. Analizar Request
+                method = item['request'].get('method', 'GET')
                 req_meta = {}
                 try:
                     body_mode = item['request'].get('body', {}).get('mode', '')
                     if body_mode == 'raw':
                         raw = item['request']['body']['raw']
-                        if raw.strip().startswith('{') or raw.strip().startswith('['):
+                        if raw.strip().startswith(("{", "[")):
                             js = json.loads(raw)
                             if isinstance(js, list) and js: js = js[0]
                             flat = flatten_payload(js)
-                            for k, v in flat.items():
-                                req_meta[k] = {"required": "?", "comment_tl": "", "example_value": str(v)[:100],
-                                               "type": infer_smart_type(k, v), "is_done": False,
-                                               "status_tag": "⚪ Sin Estado", "doc_desc": ""}
+                            for k, v in flat.items(): req_meta[k] = {"required": "?", "comment_tl": "",
+                                                                     "example_value": str(v)[:100],
+                                                                     "type": infer_smart_type(k, v), "is_done": False,
+                                                                     "status_tag": "⚪ Sin Estado", "doc_desc": ""}
                 except:
                     pass
 
-                # 2. Analizar Response (Examples)
                 res_meta = {}
                 try:
                     if 'response' in item and item['response']:
-                        # Cogemos el primer ejemplo disponible
                         first_res = item['response'][0]
                         if 'body' in first_res:
                             raw_res = first_res['body']
-                            if raw_res.strip().startswith('{') or raw_res.strip().startswith('['):
+                            if raw_res.strip().startswith(("{", "[")):
                                 js_res = json.loads(raw_res)
                                 if isinstance(js_res, list) and js_res: js_res = js_res[0]
                                 flat_res = flatten_payload(js_res)
-                                for k, v in flat_res.items():
-                                    res_meta[k] = {"required": "?", "comment_tl": "", "example_value": str(v)[:100],
-                                                   "type": infer_smart_type(k, v), "is_done": False,
-                                                   "status_tag": "⚪ Sin Estado", "doc_desc": ""}
+                                for k, v in flat_res.items(): res_meta[k] = {"required": "?", "comment_tl": "",
+                                                                             "example_value": str(v)[:100],
+                                                                             "type": infer_smart_type(k, v),
+                                                                             "is_done": False,
+                                                                             "status_tag": "⚪ Sin Estado",
+                                                                             "doc_desc": ""}
                 except:
                     pass
 
                 found_endpoints[name] = {
+                    "method": method, "extra_metadata": {},
                     "request": {"mapping_rules": {}, "field_metadata": req_meta},
                     "response": {"mapping_rules": {}, "field_metadata": res_meta}
                 }
@@ -113,77 +111,63 @@ def get_row_color(s):
 
 # --- ESTADO DE SESIÓN ---
 if 'project' not in st.session_state:
-    st.session_state.project = {
-        "courier_name": "", "project_notes": "", "dto_library": {}, "endpoints": {}
-    }
+    st.session_state.project = {"courier_name": "", "project_notes": "", "dto_library": {}, "endpoints": {}}
 if 'current_endpoint_name' not in st.session_state: st.session_state.current_endpoint_name = None
-if 'direction' not in st.session_state: st.session_state.direction = "request"  # 'request' o 'response'
+if 'direction' not in st.session_state: st.session_state.direction = "request"
 
 # --- SIDEBAR ---
 with st.sidebar:
     st.title("🚀 Mapper Pro")
-
-    # 1. CARGAR
     with st.expander("📂 Cargar Proyecto"):
         uploaded_file = st.file_uploader("", type=["json"])
         if uploaded_file and st.button("Restaurar", use_container_width=True):
             try:
                 data = json.load(uploaded_file)
-                # Migración V24 -> V25 -> V28
-                if "dto_library" not in data:  # V24 fix
+                if "dto_library" not in data:  # V24 compat
                     old_std = data.get("internal_standard_snapshot", {})
                     data["dto_library"] = {"MainDTO": old_std} if old_std else {}
-
-                # Migración Estructura Endpoints (Req/Res)
                 for ep_name, ep_data in data.get("endpoints", {}).items():
-                    if "request" not in ep_data:
-                        # Convertir estructura antigua a nueva (movemos todo a 'request')
-                        data["endpoints"][ep_name] = {
-                            "request": {"mapping_rules": ep_data.get("mapping_rules", {}),
-                                        "field_metadata": ep_data.get("field_metadata", {})},
-                            "response": {"mapping_rules": {}, "field_metadata": {}}
-                        }
-
+                    if "request" not in ep_data:  # V28 compat
+                        data["endpoints"][ep_name] = {"method": "GET", "extra_metadata": {},
+                                                      "request": {"mapping_rules": ep_data.get("mapping_rules", {}),
+                                                                  "field_metadata": ep_data.get("field_metadata", {})},
+                                                      "response": {"mapping_rules": {}, "field_metadata": {}}}
+                    elif "method" not in ep_data:  # V29 compat
+                        ep_data["method"] = "GET";
+                        ep_data["extra_metadata"] = {}
                 st.session_state.project = data
                 if data.get("endpoints"): st.session_state.current_endpoint_name = list(data["endpoints"].keys())[0]
-                st.toast("Proyecto restaurado y migrado.", icon="✅");
+                st.toast("Restaurado OK", icon="✅");
                 time.sleep(0.5);
                 st.rerun()
             except Exception as e:
                 st.error(f"Error: {e}")
 
-    # 2. POSTMAN
-    with st.expander("orange_book: Importar Postman"):
+    with st.expander("🟠 Importar Postman"):
         pm_file = st.file_uploader("Colección v2.1", type=["json"], key="pm_up")
         if pm_file and st.button("Importar", use_container_width=True):
             try:
                 new_eps = parse_postman_collection(json.load(pm_file))
                 added = 0
                 for n, d in new_eps.items():
-                    if n not in st.session_state.project["endpoints"]:
-                        st.session_state.project["endpoints"][n] = d;
-                        added += 1
+                    if n not in st.session_state.project["endpoints"]: st.session_state.project["endpoints"][
+                        n] = d; added += 1
                 if added > 0:
-                    st.success(f"Importados {added} endpoints.");
-                    st.session_state.current_endpoint_name = list(new_eps.keys())[0];
-                    time.sleep(1);
-                    st.rerun()
+                    st.success(f"Importados {added}."); st.session_state.current_endpoint_name = list(new_eps.keys())[
+                        0]; time.sleep(1); st.rerun()
                 else:
-                    st.warning("Sin endpoints nuevos.")
+                    st.warning("Sin nuevos endpoints.")
             except Exception as e:
-                st.error(f"Error Postman: {e}")
+                st.error(f"Error: {e}")
 
     st.markdown("---")
-
-    # 3. ENDPOINTS
     st.subheader("🔗 Operaciones")
-    new_ep = st.text_input("Nuevo:", placeholder="Ej: CreateOrder")
+    new_ep = st.text_input("Nuevo Endpoint:", placeholder="Ej: CreateOrder")
     if st.button("➕ Crear", use_container_width=True) and new_ep:
         if new_ep not in st.session_state.project["endpoints"]:
-            st.session_state.project["endpoints"][new_ep] = {
-                "request": {"mapping_rules": {}, "field_metadata": {}},
-                "response": {"mapping_rules": {}, "field_metadata": {}}
-            }
+            st.session_state.project["endpoints"][new_ep] = {"method": "POST", "extra_metadata": {},
+                                                             "request": {"mapping_rules": {}, "field_metadata": {}},
+                                                             "response": {"mapping_rules": {}, "field_metadata": {}}}
             st.session_state.current_endpoint_name = new_ep;
             st.rerun()
 
@@ -193,10 +177,8 @@ with st.sidebar:
         if st.session_state.current_endpoint_name in eps: idx = eps.index(st.session_state.current_endpoint_name)
         sel = st.selectbox("Activa:", eps, index=idx)
         if sel != st.session_state.current_endpoint_name: st.session_state.current_endpoint_name = sel; st.rerun()
-        if st.button("🗑️ Eliminar", use_container_width=True):
-            del st.session_state.project["endpoints"][sel]
-            st.session_state.current_endpoint_name = None;
-            st.rerun()
+        if st.button("🗑️ Eliminar", use_container_width=True): del st.session_state.project["endpoints"][
+            sel]; st.session_state.current_endpoint_name = None; st.rerun()
 
 # --- UI PRINCIPAL ---
 proj = st.session_state.project
@@ -204,13 +186,11 @@ curr_ep = st.session_state.current_endpoint_name
 
 c1, c2 = st.columns([2, 1])
 with c1: proj["courier_name"] = st.text_input("📦 Courier", value=proj["courier_name"])
-with c2: proj["project_notes"] = st.text_area("Notas", value=proj["project_notes"], height=68)
+with c2: proj["project_notes"] = st.text_area("Notas Globales", value=proj["project_notes"], height=68)
 
-tab_map, tab_dtos = st.tabs(["⇄ Mapeo (Req/Res)", "📚 DTOs"])
+tab_map, tab_dtos = st.tabs(["⇄ Mapeo y Datos", "📚 DTOs"])
 
-# ==============================================================================
-# TAB DTOs
-# ==============================================================================
+# --- TAB DTOs ---
 with tab_dtos:
     cl, ca = st.columns([1, 2])
     with cl:
@@ -228,7 +208,7 @@ with tab_dtos:
         st.subheader("Añadir DTO")
         tup, ted = st.tabs(["Nuevo", "Editar"])
         with tup:
-            nom = st.text_input("Nombre (Ej: Order)", key="nd")
+            nom = st.text_input("Nombre", key="nd")
             st1, st2 = st.tabs(["Archivo", "Pegar"])
             cont = None
             with st1:
@@ -238,7 +218,7 @@ with tab_dtos:
                 txt = st.text_area("JSON Text", height=150)
                 if txt: cont = json.loads(txt)
             if st.button("Añadir", use_container_width=True):
-                if nom and cont: proj["dto_library"][nom] = cont; st.success("Añadido"); time.sleep(0.5); st.rerun()
+                if nom and cont: proj["dto_library"][nom] = cont; st.success("OK"); time.sleep(0.5); st.rerun()
         with ted:
             opts = list(proj["dto_library"].keys())
             if opts:
@@ -247,47 +227,80 @@ with tab_dtos:
                 if st.button("Guardar", use_container_width=True): proj["dto_library"][eds] = json.loads(
                     val); st.success("Guardado")
 
-# ==============================================================================
-# TAB MAPEO (BIDIRECCIONAL)
-# ==============================================================================
+# --- TAB MAPEO Y METADATOS ---
 with tab_map:
     if not curr_ep:
         st.info("👈 Selecciona Endpoint.")
     else:
         st.markdown(f"### ⚡ Operación: `{curr_ep}`")
 
-        # --- SELECTOR DE DIRECCIÓN ---
-        # Usamos columnas para simular tabs visuales o botones grandes
+        # --- METADATOS EXTRA (CORREGIDO) ---
+        with st.container(border=True):
+            mc1, mc2 = st.columns([1, 3])
+            with mc1:
+                cur_meth = proj["endpoints"][curr_ep].get("method", "GET")
+                opts_meth = ["GET", "POST", "PUT", "DELETE", "PATCH"]
+                new_meth = st.selectbox("Método HTTP", opts_meth,
+                                        index=opts_meth.index(cur_meth) if cur_meth in opts_meth else 0)
+                proj["endpoints"][curr_ep]["method"] = new_meth
+
+            with mc2:
+                st.caption("🏷️ Datos Adicionales (Tracking, Operativa...)")
+                current_extras = proj["endpoints"][curr_ep].get("extra_metadata", {})
+
+                # --- FIX: INICIALIZAR SIEMPRE CON TIPOS DE CADENA PARA EVITAR BUG DE DOBLE INTRO ---
+                if current_extras:
+                    list_data = [{"Clave": k, "Valor": v} for k, v in current_extras.items()]
+                    df_extras = pd.DataFrame(list_data, columns=["Clave", "Valor"]).astype(str)
+                else:
+                    # Crear DataFrame vacío pero con tipado estricto
+                    df_extras = pd.DataFrame(columns=["Clave", "Valor"]).astype(str)
+
+                edited_extras = st.data_editor(
+                    df_extras,
+                    num_rows="dynamic",
+                    use_container_width=True,
+                    hide_index=True,
+                    height=150,
+                    key=f"meta_{curr_ep}",
+                    # Esta configuración le dice a Streamlit que siempre son campos de texto
+                    column_config={
+                        "Clave": st.column_config.TextColumn("Clave", required=True),
+                        "Valor": st.column_config.TextColumn("Valor")
+                    }
+                )
+
+                new_extras_dict = {}
+                for _, row in edited_extras.iterrows():
+                    # Validamos que Clave no sea None o vacía antes de guardar
+                    if row.get("Clave") and str(row["Clave"]).strip() and str(row["Clave"]) != "nan":
+                        new_extras_dict[row["Clave"]] = row["Valor"]
+                proj["endpoints"][curr_ep]["extra_metadata"] = new_extras_dict
+
+        st.divider()
+
+        # --- MAPEO ---
         d_col1, d_col2 = st.columns(2)
         direction = st.session_state.direction
-
-        # Botones para cambiar dirección
-        btn_req_type = "primary" if direction == "request" else "secondary"
-        btn_res_type = "primary" if direction == "response" else "secondary"
+        btn_req = "primary" if direction == "request" else "secondary"
+        btn_res = "primary" if direction == "response" else "secondary"
 
         with d_col1:
-            if st.button("➡️ REQUEST (Input)", type=btn_req_type, use_container_width=True):
-                st.session_state.direction = "request"
-                st.rerun()
+            if st.button("➡️ REQUEST (Input)", type=btn_req,
+                         use_container_width=True): st.session_state.direction = "request"; st.rerun()
         with d_col2:
-            if st.button("⬅️ RESPONSE (Output)", type=btn_res_type, use_container_width=True):
-                st.session_state.direction = "response"
-                st.rerun()
+            if st.button("⬅️ RESPONSE (Output)", type=btn_res,
+                         use_container_width=True): st.session_state.direction = "response"; st.rerun()
 
-        # Cargar datos según dirección
         current_data = proj["endpoints"][curr_ep][direction]
         prev_map, prev_meta = current_data["mapping_rules"], current_data["field_metadata"]
 
-        st.caption(f"Editando mapeo de: **{direction.upper()}**")
-
-        # Dropdown Unificado
         u_opts = ["SELECCIONAR_CAMPO", "IGNORED_FIELD"]
         if proj["dto_library"]:
             for dn, dc in proj["dto_library"].items():
                 for k, v in flatten_payload(dc).items(): u_opts.append(f"[{dn}] {k} | {v}")
             u_opts.sort()
 
-        # Input Payload
         t1, t2 = st.tabs(["Pegar", "Subir"])
         raw = None
         with t1:
@@ -297,7 +310,6 @@ with tab_map:
             fl = st.file_uploader("Archivo", type=['json'], key=f"fl_{curr_ep}_{direction}")
             if fl: raw = json.load(fl)
 
-        # Procesar
         keys, exs, typs = [], [], []
         if raw:
             if isinstance(raw, list) and raw: raw = raw[0]
@@ -338,7 +350,7 @@ with tab_map:
 
             edited = st.data_editor(
                 pd.DataFrame(rows),
-                key=f"ed_{curr_ep}_{direction}",  # Key única por endpoint Y dirección
+                key=f"ed_{curr_ep}_{direction}",
                 column_config={
                     "Done": st.column_config.CheckboxColumn("✅", width="small"),
                     "Estado": st.column_config.SelectboxColumn("Estado", options=STATUS_OPTS, width="medium",
@@ -355,7 +367,6 @@ with tab_map:
                 st.dataframe(edited.style.apply(lambda r: [get_row_color(r["Estado"])] * len(r), axis=1),
                              width="stretch", hide_index=True)
 
-            # Guardar en memoria (solo para la dirección actual)
             nm, nmt = {}, {}
             for _, r in edited.iterrows():
                 if "SELECCIONAR" not in r["Target (DTO)"] and "IGNORED" not in r["Target (DTO)"]:
